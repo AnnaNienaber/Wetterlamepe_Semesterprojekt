@@ -1,0 +1,246 @@
+//Bibliotheken werden eingebunden
+#include <FastLED.h>
+#include <ArduinoJson.h>                  
+#include <math.h>                         
+#include <WiFiManager.h>  
+
+//Variablen werden deklariert                
+#define BRIGHTNESS 64
+#define DATA_PIN D3 
+#define NUM_LEDS 7   
+
+CRGB leds[NUM_LEDS];
+
+WiFiManager wifiManager;
+WiFiClient client;
+
+// ========================  hier deinen API-Key eintragen!!!  ============================================================================================================
+const String city = "Cloppenburg";
+const String api_key = "0e158271347de554d3da33d560fcf99f";    // dein Open-Weather-Map-API-Schluessel, kostenlos beziehbar ueber https://openweathermap.org/
+// ========================================================================================================================================================================
+
+//Variablen werden deklariert
+int weatherID = 0;
+int weatherID_shortened = 0;
+String weatherforecast_shortened = " ";
+int temperature_Celsius_Int = 0;
+unsigned long lastcheck = 0;                      
+
+void getCurrentWeatherConditions() {
+  int WeatherData;
+  // Konsolenausgabe
+  Serial.print("connecting to "); Serial.println("api.openweathermap.org");
+  //Wenn der cient connecten kann, liest er wird die Verbindung mit der Stadt und dem api key hergestellt
+  if (client.connect("api.openweathermap.org", 80)) {
+    client.println("GET /data/2.5/weather?q=" + city + ",DE&units=metric&lang=de&APPID=" + api_key);
+    client.println("Host: api.openweathermap.org");
+    client.println("Connection: close");
+    client.println();
+  //ansonsten wird eine Fehlermeldung ausgegeben   
+  } else {
+    Serial.println("connection failed");
+  }
+  //Der client wird nun mit der festgelegten maximalen Kapazität für das Dokument ausgelesen
+  const size_t capacity = JSON_ARRAY_SIZE(2) + 2 * JSON_OBJECT_SIZE(1) + 2 * JSON_OBJECT_SIZE(2) + 2 * JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(14) + 360;
+  DynamicJsonDocument doc(capacity);
+  //das Dokument wird deserializiert
+  deserializeJson(doc, client);
+  //der client wird wieder geschlossen
+  client.stop();
+  //weatherID wird aus dem Dokument gelesen und gespeichert
+  weatherID = doc["weather"][0]["id"];
+  //Temperatur wird gespeichert
+  int temperature_Celsius = doc["main"]["temp"];
+  temperature_Celsius_Int = (int)temperature_Celsius;
+  //WetterID wird gekürzt
+  weatherID_shortened = weatherID / 100;
+  // case 800 wird extra abgefragt, da die shortened WeatherID 
+  //die gleiche, wie die für Cloudy ist
+   if (weatherID == 800) Serial.println("Sunny"); 
+   else {
+  //switch für das abarbeiten aller Wetterlagen und Ausgeben der Wetterlage auf Konsole
+  switch (weatherID_shortened) {                                    
+      case 2: Serial.println("Thunder"); break;    
+      case 3: Serial.println("Drizzle"); break;    
+      case 5: Serial.println("Rainy"); break;       
+      case 6: Serial.println("Snowy"); break;       
+      case 7: Serial.println("Foggy"); break;        
+      case 8: Serial.println("Cloudy"); break;  
+    default: weatherforecast_shortened = ""; break;
+    }
+   }
+}
+
+
+void setup() {
+  Serial.begin(115200);    
+  //FASTLED wird vorbereitet
+  //FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+  FastLED.setMaxPowerInVoltsAndMilliamps(5, 400);
+  FastLED.clear();
+  FastLED.show();
+  //LEDs werden alle auf gelb eingeschaltet
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = CRGB( 253, 184, 19);
+  }
+  FastLED.setBrightness(BRIGHTNESS);
+  FastLED.show();
+  //WiFi wird als "deineWetterLampe" verbunden, beim erstmaligen Start muss die Verbindung manuell hergestellt werden
+  wifiManager.autoConnect("deineWetterLampe");
+  //LEDs werden ausgestellt
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = CRGB( 0, 0, 0);
+  }
+  FastLED.show();
+  delay(2000);
+  getCurrentWeatherConditions();
+}
+
+
+//LED wird langsam in eine andere Lecuhtfarbe übergewechselt
+//Parameter: Position der LED, Länge des Wechsels, Wert der Pause in jedem Schritt, Startwerte RGB, gewünschte Endwerte RGB
+void fade(int led_position, uint16_t duration, uint16_t delay_val, uint16_t startR, uint16_t startG, uint16_t startB, uint16_t endR, uint16_t endG, uint16_t endB) {
+  //Differenzen werden ausgerechnet
+  int16_t redDiff = endR - startR;
+  int16_t greenDiff = endG - startG;
+  int16_t blueDiff = endB - startB;
+  //Anzahl der Schritte
+  int16_t steps = duration * 1000 / delay_val;
+  int16_t redValue, greenValue, blueValue;
+  //for Schleife, in denen jedem Wert jeweils die Differenz/Schritte addiert wird, sodass am Ende der gewüsncht Wert entsteht
+  for (int16_t i = 0 ; i < steps - 1 ; ++i) {
+    redValue = (int16_t)startR + (redDiff * i / steps);
+    greenValue = (int16_t)startG + (greenDiff * i / steps);
+    blueValue = (int16_t)startB + (blueDiff * i / steps);
+    leds[led_position] = CRGB(redValue, greenValue, blueValue);
+    FastLED.show();
+    delay(delay_val);
+  }
+  //zum Schluss werden die Endwerte gesetzt
+  leds[led_position] = CRGB(endR, endG, endB);
+}
+
+// Effekt, der angezeigt wird, wenn der Himmel klar ist
+void LED_effect_clearSky() { 
+  //LED wird eine auf Gelb gestellt
+  FastLED.setBrightness(120);
+  leds[0] = CRGB::Yellow;
+  FastLED.show();
+  delay(500);
+}
+
+void LED_effect_cloudy() {
+  //2 Sek lang gelbes Leuchten, danach eine Sek lang weiß für Sonne und Wolken
+  //mit langsamen Wechsel, der jeweils 2 Sekunden dauert
+  FastLED.setBrightness(75);
+  //fade von weiß zu gelb
+  fade(0, 2 , 50, 255, 255, 0, 255, 255, 255);
+  FastLED.show();
+  delay(2000);
+  
+  //fade von gelb zu weiß
+  fade(0, 2 , 50, 255, 255, 255, 255, 255, 0);
+  FastLED.show();
+  delay(1000);
+}
+
+void LED_effect_rainy() {
+  //blaues blinken
+   FastLED.setBrightness(80);
+  
+  //Blau, welches nicht ganz volle Saturation hat
+  //für eine halbe Sekunde
+  //leds[0] = CRGB(0,0,238);
+   for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = CRGB( 0, 0, 238);
+  }
+  FastLED.show();
+  delay(500);
+
+  //schwarz für eine halbe Sekunde
+  leds[0] = CRGB::Black;
+  FastLED.show();
+  delay(500);
+}
+
+void LED_effect_thunderstorm() {
+  //blaues Blinken, mit seltenerem gelbem Blinken
+  LED_effect_rainy();
+  LED_effect_rainy();
+  //gelbes blinken für Blitz (3x länger als der Regen)
+  FastLED.setBrightness(80);
+  leds[0] = CRGB::Yellow;
+  FastLED.show();
+  delay(1500);
+  
+  //leds[0] = CRGB::Black;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = CRGB( 0, 0, 0);
+  }
+  FastLED.show();
+  delay(500);
+}
+  
+
+
+void LED_effect_drizzle() {
+   //blaues Blinken (heller und gräulicher als normaler Regen 
+   //und 3x längere Pause zwischen dem blauem Blinken)
+  FastLED.setBrightness(80);
+  leds[0] = CRGB(24,116,205);
+  FastLED.show();
+  delay(500);
+    
+  leds[0] = CRGB::Black;
+  FastLED.show();
+  delay(1500);
+}
+
+
+
+void LED_effect_snowy() {
+  //Sehr helles blaues blinken (fast weiß)
+  FastLED.setBrightness(100);
+  leds[0] = CRGB(240,255,255);
+  FastLED.show();
+  delay(500);
+
+  leds[0] = CRGB::Black;
+  FastLED.show();
+  delay(500);
+}
+
+void LED_effect_foggy() {
+  //weißes Licht wechselt langsam zu ausgeschalteter LED
+  FastLED.setBrightness(60);
+  fade(1, 2 , 50, 0, 0, 0, 255, 255, 255);
+  FastLED.show();
+  delay(500);
+  
+  fade(1, 2 , 50, 255, 255, 255, 0, 0, 0);
+  FastLED.show();
+  delay(500);
+}
+
+void loop() {
+  //Wetter wird alle 30 Minuten überprüft
+  if (millis() - lastcheck >= 1800000) {         
+    getCurrentWeatherConditions();
+    lastcheck = millis();                         
+  }
+    // damit 800 nicht zu case 8 gehört, wird es extra abgefragt
+   if (weatherID == 800) LED_effect_clearSky();  
+   else {
+    // einzelne Fälle werde in Switch abgearbeitet, LED Effekte werden gestartet
+   switch (weatherID_shortened) {
+      case 2: LED_effect_thunderstorm(); break;    
+      case 3: LED_effect_drizzle(); break;    
+      case 5: LED_effect_rainy(); break;       
+      case 6: LED_effect_snowy(); break;       
+      case 7: LED_effect_foggy(); break;        
+      case 8: LED_effect_cloudy(); break;    
+    }
+   }
+  
+}
